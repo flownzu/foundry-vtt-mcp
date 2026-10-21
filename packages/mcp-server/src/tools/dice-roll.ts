@@ -61,6 +61,14 @@ export class DiceRollTools {
               description: 'Optional flavor text to describe the roll context',
               default: '',
             },
+            // Local patch: preselect advantage/disadvantage in the player's dnd5e roll dialog
+            advantageMode: {
+              type: 'string',
+              enum: ['normal', 'advantage', 'disadvantage'],
+              description:
+                'Advantage mode for skill, save and ability rolls: preselected in the dnd5e roll dialog the player gets (the player can still change it). Default normal.',
+              default: 'normal',
+            },
           },
           required: [
             'rollType',
@@ -69,6 +77,29 @@ export class DiceRollTools {
             'isPublic',
             'userConfirmedVisibility',
           ],
+        },
+      },
+      // Local patch: read recent chat messages / roll results
+      {
+        name: 'get-chat-messages',
+        description:
+          'Read the most recent Foundry chat messages (GM view, includes whispers), oldest first. Each message has author, speaker/actor, flavor, plain-text content, visibility and roll results (formula, total, individual dice). Use rollsOnly to get only roll messages, e.g. to see the result of a roll requested with request-player-rolls.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            limit: {
+              type: 'number',
+              description: 'Number of most recent messages to return (1-50, default 10)',
+              minimum: 1,
+              maximum: 50,
+              default: 10,
+            },
+            rollsOnly: {
+              type: 'boolean',
+              description: 'Only return messages that contain dice rolls',
+              default: false,
+            },
+          },
         },
       },
     ];
@@ -83,6 +114,7 @@ export class DiceRollTools {
       userConfirmedVisibility: z.literal(true),
       rollModifier: z.string().default(''),
       flavor: z.string().default(''),
+      advantageMode: z.enum(['normal', 'advantage', 'disadvantage']).default('normal'),
     });
 
     try {
@@ -120,5 +152,19 @@ export class DiceRollTools {
       }
       throw error;
     }
+  }
+
+  // Local patch: read recent chat messages / roll results
+  async handleGetChatMessages(args: any) {
+    const schema = z.object({
+      limit: z.number().min(1).max(50).default(10),
+      rollsOnly: z.boolean().default(false),
+    });
+    const params = schema.parse(args ?? {});
+    const response = await this.foundryClient.query('foundry-mcp-bridge.getChatMessages', params);
+    if (response?.success === false) {
+      throw new Error(response.error || 'Failed to get chat messages');
+    }
+    return response;
   }
 }

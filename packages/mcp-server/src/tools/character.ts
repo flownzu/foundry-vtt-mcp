@@ -364,6 +364,7 @@ export class CharacterTools {
           // Include full system data for advanced use cases
           system: entity.system,
           effects: entity.effects ?? [],
+          ...(entity.flags ? { flags: entity.flags } : {}),
         };
       } else if (entityType === 'action') {
         return {
@@ -771,6 +772,8 @@ export class CharacterTools {
       items: this.formatItems(characterData.items || []),
       effects: this.formatEffects(characterData.effects || []),
       hasImage: !!characterData.img,
+      ...(characterData.img ? { img: characterData.img } : {}),
+      ...(characterData.prototypeToken ? { prototypeToken: characterData.prototypeToken } : {}),
     };
 
     // Add actions with minimal data (name, traits, action cost only - no variants)

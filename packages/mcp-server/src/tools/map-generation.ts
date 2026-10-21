@@ -140,6 +140,12 @@ export class MapGenerationTools {
               description: 'Automatically optimize the view for the scene',
               default: true,
             },
+            mode: {
+              type: 'string',
+              enum: ['activate', 'view'],
+              description: "'activate' (default) moves all players to the scene; 'view' switches only the GM's own view",
+              default: 'activate',
+            },
           },
           required: ['scene_identifier'],
         },
@@ -175,6 +181,7 @@ export class MapGenerationTools {
       const params = {
         scene_identifier: sceneIdentifier,
         optimize_view: safeInput.optimize_view !== false,
+        mode: safeInput.mode === 'view' ? 'view' : 'activate',
       };
 
       return await this.foundryClient.query('foundry-mcp-bridge.switch-scene', params);

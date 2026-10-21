@@ -264,6 +264,8 @@ export class SceneTools {
             id: u.id,
             name: u.name,
             isGM: u.isGM,
+            viewedScene: u.viewedScene ?? null,
+            character: u.character ?? null,
           })) || [],
     };
   }

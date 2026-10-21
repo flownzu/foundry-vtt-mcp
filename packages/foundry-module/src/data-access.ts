@@ -7,6 +7,7 @@ interface CharacterInfo {
   name: string;
   type: string;
   img?: string;
+  prototypeToken?: Record<string, any>;
   system: Record<string, unknown>;
   items: CharacterItem[];
   effects: CharacterEffect[];
@@ -1736,6 +1737,22 @@ export class FoundryDataAccess {
       name: actor.name || '',
       type: actor.type,
       ...(actor.img ? { img: actor.img } : {}),
+      ...(() => {
+        const pt: any = (actor as any).prototypeToken?.toObject?.() ?? (actor as any).prototypeToken;
+        if (!pt) return {};
+        return {
+          prototypeToken: {
+            name: pt.name,
+            width: pt.width,
+            height: pt.height,
+            alpha: pt.alpha,
+            texture: pt.texture
+              ? { src: pt.texture.src, tint: pt.texture.tint, scaleX: pt.texture.scaleX, scaleY: pt.texture.scaleY }
+              : undefined,
+            ring: pt.ring,
+          },
+        };
+      })(),
       system: this.sanitizeData((actor as any).system),
       items: actor.items.map(item => {
         const itemData = item.toObject() as Record<string, any>;
@@ -3852,6 +3869,8 @@ export class FoundryDataAccess {
         name: user.name || '',
         active: user.active,
         isGM: user.isGM,
+        viewedScene: (user as any).viewedScene || null,
+        character: (user as any).character?.name || null,
       })),
     };
   }
@@ -7339,8 +7358,16 @@ export class FoundryDataAccess {
         throw new Error(`Scene not found: "${options.scene_identifier}"`);
       }
 
-      // Activate the scene
-      await targetScene.activate();
+      // Activate the scene (mode 'view': nur der GM wechselt, Spieler bleiben)
+      if ((options as any).mode === 'view') {
+        await targetScene.view();
+      } else {
+        await targetScene.activate();
+        // Auch Spieler holen, die selbst auf eine andere Szene gewechselt sind
+        for (const user of (game.users as any).filter((u: any) => u.active && !u.isGM && u.viewedScene !== targetScene.id)) {
+          (game.socket as any).emit('pullToScene', targetScene.id, user.id);
+        }
+      }
 
       // Optimize view if requested (default true)
       if (options.optimize_view !== false && typeof canvas !== 'undefined' && canvas?.scene) {
@@ -7803,6 +7830,9 @@ export class FoundryDataAccess {
             description: itemSystem.description?.value || itemSystem.description || '',
             system: itemSystem,
             effects: itemData.effects ?? [],
+            ...(itemData.flags?.autoanimations
+              ? { flags: { autoanimations: itemData.flags.autoanimations } }
+              : {}),
           },
         };
       }
@@ -10864,7 +10894,13 @@ export class FoundryDataAccess {
    * Merges supplied fields into the actor (top-level keys overwrite).
    */
   async updateActors(
-    updates: Array<{ id: string; name?: string; img?: string; system?: Record<string, any> }>
+    updates: Array<{
+      id: string;
+      name?: string;
+      img?: string;
+      system?: Record<string, any>;
+      prototypeToken?: Record<string, any>;
+    }>
   ): Promise<{ updated: Array<{ id: string; name: string }>; total: number }> {
     const updatedActors: Array<{ id: string; name: string }> = [];
 
@@ -10875,6 +10911,7 @@ export class FoundryDataAccess {
       const patch: Record<string, any> = {};
       if (u.name !== undefined) patch.name = u.name;
       if (u.img !== undefined) patch.img = u.img;
+      if (u.prototypeToken !== undefined) patch.prototypeToken = u.prototypeToken;
       if (u.system !== undefined) {
         // Build a single patch.system nested object so Foundry deep-merges everything
         // in one pass without flat-key vs nested-key conflicts.
@@ -11050,7 +11087,13 @@ export class FoundryDataAccess {
    */
   async updateActorItems(
     actorIdentifier: string,
-    itemUpdates: Array<{ id: string; name?: string; img?: string; system?: Record<string, any> }>
+    itemUpdates: Array<{
+      id: string;
+      name?: string;
+      img?: string;
+      system?: Record<string, any>;
+      flags?: Record<string, any>;
+    }>
   ): Promise<{ updated: Array<{ id: string; name: string }>; total: number }> {
     const actor =
       (game.actors.get(actorIdentifier) as any) ??
@@ -11069,6 +11112,7 @@ export class FoundryDataAccess {
       if (u.name !== undefined) patch.name = u.name;
       if (u.img !== undefined) patch.img = u.img;
       if (u.system !== undefined) patch.system = u.system;
+      if (u.flags !== undefined) patch.flags = u.flags;
 
       await item.update(patch);
       updated.push({ id: item.id, name: u.name ?? item.name });
