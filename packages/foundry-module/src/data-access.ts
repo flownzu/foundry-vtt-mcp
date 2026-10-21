@@ -5613,6 +5613,7 @@ export class FoundryDataAccess {
     isPublic: boolean;
     rollModifier: string;
     flavor: string;
+    advantageMode?: 'normal' | 'advantage' | 'disadvantage';
   }): Promise<{ success: boolean; message: string; error?: string }> {
     this.validateFoundryState();
 
@@ -5651,15 +5652,20 @@ export class FoundryDataAccess {
           <p><strong>Roll Request:</strong> ${buttonLabel}</p>
           <p><strong>Target:</strong> ${playerInfo.targetName} ${playerInfo.character ? `(${playerInfo.character.name})` : ''}</p>
           ${data.flavor ? `<p><strong>Context:</strong> ${data.flavor}</p>` : ''}
-          
+          ${data.advantageMode === 'advantage' ? '<p><strong>Advantage</strong></p>' : data.advantageMode === 'disadvantage' ? '<p><strong>Disadvantage</strong></p>' : ''}
+
           <div style="text-align: center; margin-top: 8px;">
             <!-- Single Roll Button (clickable by both character owner and GM) -->
-            <button class="mcp-roll-button mcp-button-active" 
+            <button class="mcp-roll-button mcp-button-active"
                     data-button-id="${buttonId}"
                     data-roll-formula="${rollFormula}"
                     data-roll-label="${buttonLabel}"
                     data-is-public="${data.isPublic}"
                     data-character-id="${playerInfo.character?.id || ''}"
+                    data-roll-type="${data.rollType}"
+                    data-roll-target="${String(data.rollTarget).replace(/"/g, '&quot;')}"
+                    data-advantage-mode="${data.advantageMode || 'normal'}"
+                    data-roll-modifier="${String(data.rollModifier || '').replace(/"/g, '&quot;')}"
                     data-target-user-id="${playerInfo.user?.id || ''}">
               🎲 ${buttonLabel}
             </button>
@@ -5940,8 +5946,12 @@ export class FoundryDataAccess {
 
         case 'save':
           // Use saving throw modifier from roll data
+          // Local patch: dnd5e 5.x stores the save as an object ({ value, ... })
+          const saveRaw = rollData.abilities?.[rollTarget]?.save;
           const saveMod =
-            rollData.abilities?.[rollTarget]?.save ?? rollData.abilities?.[rollTarget]?.mod ?? 0;
+            (typeof saveRaw === 'object' ? saveRaw?.value : saveRaw) ??
+            rollData.abilities?.[rollTarget]?.mod ??
+            0;
           baseFormula = `1d20+${saveMod}`;
           break;
 
@@ -6036,6 +6046,86 @@ export class FoundryDataAccess {
    * Restore roll button states from persistent storage
    * Called when chat messages are rendered to maintain state across sessions
    */
+
+  /**
+   * Local patch: roll skill/save/ability checks through dnd5e so the player gets
+   * the roll dialog (advantage/disadvantage) and dnd5e's own bonuses apply.
+   * Returns 'rolled', 'cancelled' (dialog closed) or 'skip' (use the formula).
+   */
+  private async mcpNativeRoll(
+    character: any,
+    button: JQuery,
+    isPublic: boolean
+  ): Promise<'rolled' | 'cancelled' | 'skip'> {
+    const type = String(button.data('roll-type') || '');
+    const target = String(button.data('roll-target') || '')
+      .toLowerCase()
+      .trim();
+    const modifier = String(button.data('roll-modifier') || '').trim();
+    if (
+      !character ||
+      game.system?.id !== 'dnd5e' ||
+      modifier ||
+      !['skill', 'save', 'ability'].includes(type)
+    ) {
+      return 'skip';
+    }
+    const SKILLS: Record<string, string> = {
+      acrobatics: 'acr',
+      'animal handling': 'ani',
+      arcana: 'arc',
+      athletics: 'ath',
+      deception: 'dec',
+      history: 'his',
+      insight: 'ins',
+      intimidation: 'itm',
+      investigation: 'inv',
+      medicine: 'med',
+      nature: 'nat',
+      perception: 'prc',
+      performance: 'prf',
+      persuasion: 'per',
+      religion: 'rel',
+      'sleight of hand': 'slt',
+      stealth: 'ste',
+      survival: 'sur',
+    };
+    const ABILITIES: Record<string, string> = {
+      str: 'str',
+      strength: 'str',
+      dex: 'dex',
+      dexterity: 'dex',
+      con: 'con',
+      constitution: 'con',
+      int: 'int',
+      intelligence: 'int',
+      wis: 'wis',
+      wisdom: 'wis',
+      cha: 'cha',
+      charisma: 'cha',
+    };
+    const mode = String(button.data('advantage-mode') || 'normal');
+    const config = { advantage: mode === 'advantage', disadvantage: mode === 'disadvantage' };
+    // defaultButton selects the dialog's preselected button; config.advantage alone gets overridden
+    const dialog =
+      mode === 'normal' ? { configure: true } : { configure: true, options: { defaultButton: mode } };
+    const message = { rollMode: isPublic ? 'publicroll' : 'gmroll' };
+    let result: any;
+    if (type === 'skill') {
+      const skill = SKILLS[target] || target;
+      if (!character.system?.skills?.[skill] || typeof character.rollSkill !== 'function') {
+        return 'skip';
+      }
+      result = await character.rollSkill({ skill, ...config }, dialog, message);
+    } else {
+      const ability = ABILITIES[target];
+      const fn = type === 'save' ? character.rollSavingThrow : character.rollAbilityCheck;
+      if (!ability || typeof fn !== 'function') return 'skip';
+      result = await fn.call(character, { ability, ...config }, dialog, message);
+    }
+    const rolled = Array.isArray(result) ? result.length > 0 : Boolean(result);
+    return rolled ? 'rolled' : 'cancelled';
+  }
 
   /**
    * Attach click handlers to roll buttons and handle visibility
@@ -6141,6 +6231,25 @@ export class FoundryDataAccess {
       }
 
       try {
+        // Local patch: native dnd5e roll with its dialog (advantage mode preselected)
+        const nativeCharacter = characterId ? game.actors?.get(characterId) : null;
+        const native = await this.mcpNativeRoll(nativeCharacter, button, isPublic);
+        if (native === 'cancelled') {
+          button.prop('disabled', false);
+          button.text(originalText);
+          return;
+        }
+        if (native === 'rolled') {
+          try {
+            // read the id from the button: a later `const buttonId` in this block shadows the outer one
+            await this.updateRollButtonMessage(button.data('button-id'), game.user.id, rollLabel);
+          } catch (updateError) {
+            console.error(`[${MODULE_ID}] Failed to update chat message:`, updateError);
+            button.prop('disabled', true).text('✓ Rolled');
+          }
+          return;
+        }
+
         // Create and evaluate the roll
         const roll = new Roll(rollFormula);
         await roll.evaluate();
@@ -6310,24 +6419,25 @@ export class FoundryDataAccess {
   ): Promise<void> {
     try {
       // Get the message ID for this button
-      const messageId = this.getRollButtonMessageId(buttonId);
+      const messageId =
+        this.getRollButtonMessageId(buttonId) ||
+        game.messages?.find((m: any) =>
+          String(m.content || '').includes(`data-button-id="${buttonId}"`)
+        )?.id;
 
       if (!messageId) {
-        throw new Error(`No message ID found for button ${buttonId}`);
+        return; // already gone (another client may have deleted the answered request)
       }
 
       // Get the chat message
       const chatMessage = game.messages?.get(messageId);
 
       if (!chatMessage) {
-        throw new Error(`ChatMessage ${messageId} not found`);
+        return; // already gone (another client may have deleted the answered request)
       }
 
-      const rolledByName = game.users?.get(userId)?.name || 'Unknown';
-      const timestamp = new Date().toLocaleString();
-
       // Check permissions before attempting update
-      const canUpdate = chatMessage.canUserModify(game.user, 'update');
+      const canUpdate = chatMessage.canUserModify(game.user, 'delete');
 
       if (!canUpdate && !game.user?.isGM) {
         // Non-GM user cannot update message - request GM to do it via socket
@@ -6355,38 +6465,8 @@ export class FoundryDataAccess {
         }
       }
 
-      // Update the message flags to mark button as rolled
-      const currentFlags = chatMessage.flags || {};
-      const moduleFlags = currentFlags[MODULE_ID] || {};
-      const rollButtons = moduleFlags.rollButtons || {};
-
-      rollButtons[buttonId] = {
-        ...rollButtons[buttonId],
-        rolled: true,
-        rolledBy: userId,
-        rolledByName,
-        timestamp: Date.now(),
-      };
-
-      // Create the rolled state HTML
-      const rolledHtml = `
-        <div class="mcp-roll-request" style="margin: 10px 0; padding: 10px; border: 1px solid #ccc; border-radius: 5px; background: #f9f9f9;">
-          <p><strong>Roll Request:</strong> ${rollLabel}</p>
-          <p><strong>Status:</strong> ✅ <strong>Completed by ${rolledByName}</strong> at ${timestamp}</p>
-        </div>
-      `;
-
-      // Update the message content and flags
-      await chatMessage.update({
-        content: rolledHtml,
-        flags: {
-          ...currentFlags,
-          [MODULE_ID]: {
-            ...moduleFlags,
-            rollButtons,
-          },
-        },
-      });
+      // Local patch: delete the request once rolled, so a reload never shows an active button again
+      await chatMessage.delete().catch(() => {});
     } catch (error) {
       console.error(`[${MODULE_ID}] Error updating roll button message:`, error);
       console.error(`[${MODULE_ID}] Error stack:`, error instanceof Error ? error.stack : error);
@@ -7313,6 +7393,7 @@ export class FoundryDataAccess {
         id: scene.id,
         name: scene.name,
         active: scene.active,
+        viewed: scene.isView,
         dimensions: {
           width: scene.dimensions?.width || scene.width || 0,
           height: scene.dimensions?.height || scene.height || 0,

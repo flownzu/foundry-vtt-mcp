@@ -71,6 +71,8 @@ export class QueryHandlers {
       this.handleUpdateJournalContent.bind(this);
 
     // Phase 4: Dice roll queries
+    // Local patch: read recent chat messages / roll results
+    CONFIG.queries[`${modulePrefix}.getChatMessages`] = this.handleGetChatMessages.bind(this);
     CONFIG.queries[`${modulePrefix}.request-player-rolls`] =
       this.handleRequestPlayerRolls.bind(this);
 
@@ -645,6 +647,56 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to create journal entry: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Local patch: return recent chat messages including roll results (GM only)
+   */
+  async handleGetChatMessages(data: { limit?: number; rollsOnly?: boolean }): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+      const limit = Math.min(Math.max(Number(data?.limit) || 10, 1), 50);
+      const rollsOnly = data?.rollsOnly === true;
+      const strip = (html: unknown): string => {
+        if (!html) return '';
+        const div = document.createElement('div');
+        div.innerHTML = String(html);
+        return (div.textContent || '').replace(/\s+/g, ' ').trim();
+      };
+      const g = game as any;
+      let messages: any[] = g.messages.contents;
+      if (rollsOnly) messages = messages.filter((m: any) => m.rolls?.length);
+      messages = messages.slice(-limit);
+      const userName = (id: string) => g.users.get(id)?.name ?? id;
+      const result = messages.map((m: any) => ({
+        id: m.id,
+        time: new Date(m.timestamp).toISOString(),
+        author: m.author?.name ?? null,
+        speaker: m.speaker?.alias ?? null,
+        actor: m.speaker?.actor ? (g.actors.get(m.speaker.actor)?.name ?? m.speaker.actor) : null,
+        flavor: strip(m.flavor).slice(0, 300),
+        content: strip(m.content).slice(0, 500),
+        visibility: m.blind ? 'blind' : m.whisper?.length ? 'whisper' : 'public',
+        whisperTo: (m.whisper ?? []).map(userName),
+        dnd5eRoll: m.flags?.dnd5e?.roll ?? null,
+        rolls: (m.rolls ?? []).map((r: any) => ({
+          formula: r.formula,
+          total: r.total,
+          dice: r.dice.map((d: any) => ({
+            faces: d.faces,
+            results: d.results.map((x: any) => ({ result: x.result, active: x.active !== false })),
+          })),
+        })),
+      }));
+      return { success: true, count: result.length, messages: result };
+    } catch (error) {
+      throw new Error(
+        `Failed to get chat messages: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }
