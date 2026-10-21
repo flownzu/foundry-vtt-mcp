@@ -648,9 +648,9 @@ export async function creatureCard(data: any): Promise<any> {
   const skills = Object.entries<any>(sys.skills ?? {})
     .filter(([, s]) => s.proficient)
     .map(([k, s]) => `${label(dnd.skills, k)} ${signed(s.total)}`);
-  const movement = Object.entries<any>(attr.movement ?? {})
-    .filter(([k, v]) => typeof v === 'number' && v > 0 && k !== 'hover')
-    .map(([k, v]) => `${k} ${v}`);
+  const movement = ['walk', 'fly', 'swim', 'climb', 'burrow']
+    .filter(k => Number(attr.movement?.[k]) > 0)
+    .map(k => `${k} ${attr.movement[k]}${k === 'fly' && attr.movement.hover ? ' (hover)' : ''}`);
   const senses = Object.entries<any>(attr.senses?.ranges ?? attr.senses ?? {})
     .filter(([, v]) => typeof v === 'number' && v > 0)
     .map(([k, v]) => `${k} ${v}`);
