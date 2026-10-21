@@ -156,6 +156,7 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.postChat`] = table.postChat;
     CONFIG.queries[`${modulePrefix}.runMacro`] = table.runMacro;
     CONFIG.queries[`${modulePrefix}.sceneView`] = table.sceneView;
+    CONFIG.queries[`${modulePrefix}.creatureCard`] = table.creatureCard;
 
     // Phase 7: Token manipulation queries
     CONFIG.queries[`${modulePrefix}.move-token`] = this.handleMoveToken.bind(this);

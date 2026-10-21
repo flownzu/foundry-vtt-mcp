@@ -1648,6 +1648,7 @@ async function startBackend(): Promise<void> {
                 case 'post-chat':
                 case 'run-macro':
                 case 'scene-view':
+                case 'creature-card':
                   result = await tableTools.handle(name, args);
 
                   break;

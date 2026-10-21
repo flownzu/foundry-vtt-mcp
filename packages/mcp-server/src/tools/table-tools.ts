@@ -91,6 +91,9 @@ const schemas = {
       weather: z.string().optional(),
     })
     .strict(),
+  'creature-card': z
+    .object({ target: z.string().optional(), actor: z.string().optional(), sceneIdentifier: scene })
+    .strict(),
 } as const;
 
 type ToolName = keyof typeof schemas;
@@ -104,6 +107,7 @@ const queryNames: Record<ToolName, string> = {
   'post-chat': 'postChat',
   'run-macro': 'runMacro',
   'scene-view': 'sceneView',
+  'creature-card': 'creatureCard',
 };
 
 const sceneProp = {
@@ -281,6 +285,24 @@ export class TableTools {
             weather: { type: 'string' },
           },
           required: ['action'],
+        },
+      },
+      {
+        name: 'creature-card',
+        description:
+          'Compact stat block with derived values for a token on the scene (target) or a world actor (actor: name, id or uuid): ' +
+          'CR, HP, AC, initiative, speed, abilities, proficient saves and skills, senses, resistances/immunities, legendary actions, ' +
+          'and actions with activation, to-hit, save DC, damage, uses or recharge. For quick reference at the table.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            target: { type: 'string', description: 'Token id or name on the scene' },
+            actor: {
+              type: 'string',
+              description: 'World actor name, id or uuid (also compendium uuid)',
+            },
+            sceneIdentifier: sceneProp,
+          },
         },
       },
     ];

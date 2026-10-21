@@ -608,3 +608,118 @@ export async function sceneView(data: any): Promise<any> {
   if (ok === false) throw new Error('Punkt liegt außerhalb der Szene');
   return { success: true, scene: scene.name, point, pull };
 }
+
+// ══════════ Kreaturen-Karte ══════════
+
+const signed = (n: number) => (n >= 0 ? `+${n}` : String(n));
+
+/** Kompakter Werteblock mit abgeleiteten Werten (Trefferbonus, Schaden, SG) für Token oder Actor. */
+export async function creatureCard(data: any): Promise<any> {
+  requireGM();
+  let actor: any = null;
+  let token: any = null;
+  if (data.target) {
+    const scene = resolveScene(data.sceneIdentifier);
+    [{ token, actor }] = resolveTargets(scene, [data.target], { actorFallback: true });
+  } else if (data.actor) {
+    actor = g().actors.get(data.actor) ?? g().actors.find((a: any) => ci(a.name, data.actor));
+    if (!actor && String(data.actor).includes('.'))
+      actor = await (globalThis as any).fromUuid(data.actor);
+  }
+  if (!actor) throw new Error('target (Token) oder actor (Name, ID, UUID) angeben');
+
+  const dnd = cfg().DND5E;
+  const sys = actor.system ?? {};
+  const attr = sys.attributes ?? {};
+  const label = (map: any, key: string) => g().i18n.localize(map?.[key]?.label ?? key);
+  const traitList = (t: any, map: any) => {
+    if (!t) return [];
+    const vals = [...(t.value ?? [])].map((k: string) => label(map, k));
+    if (t.custom) vals.push(t.custom);
+    return vals;
+  };
+
+  const abilities: Record<string, string> = {};
+  const saves: string[] = [];
+  for (const [k, a] of Object.entries<any>(sys.abilities ?? {})) {
+    abilities[k] = `${a.value} (${signed(a.mod)})`;
+    if (a.proficient) saves.push(`${k} ${signed(a.save?.value ?? a.save ?? a.mod)}`);
+  }
+  const skills = Object.entries<any>(sys.skills ?? {})
+    .filter(([, s]) => s.proficient)
+    .map(([k, s]) => `${label(dnd.skills, k)} ${signed(s.total)}`);
+  const movement = Object.entries<any>(attr.movement ?? {})
+    .filter(([k, v]) => typeof v === 'number' && v > 0 && k !== 'hover')
+    .map(([k, v]) => `${k} ${v}`);
+  const senses = Object.entries<any>(attr.senses?.ranges ?? attr.senses ?? {})
+    .filter(([, v]) => typeof v === 'number' && v > 0)
+    .map(([k, v]) => `${k} ${v}`);
+
+  const actions = [];
+  const traits = [];
+  for (const item of actor.items) {
+    const activities = [...(item.system?.activities ?? [])].filter((act: any) => !act.isHidden);
+    const activation = activities[0]?.activation?.type ?? item.system?.activation?.type ?? '';
+    const uses = item.system?.uses;
+    const recharge = uses?.recovery?.find((r: any) => r.period === 'recharge');
+    const usesText = recharge
+      ? `Aufladen ${recharge.formula}${recharge.formula === '6' ? '' : '–6'}${uses.value ? '' : ' (leer)'}`
+      : uses?.max > 0
+        ? `${uses.value}/${uses.max}`
+        : '';
+    if (!activities.length || !activation || item.type === 'spell') {
+      if (item.type === 'feat') traits.push(item.name);
+      continue;
+    }
+    const parts = activities.map((act: any) => {
+      const bits: string[] = [];
+      if (act.labels?.toHit) bits.push(`${act.labels.toHit} zum Treffen`);
+      if (act.labels?.save) bits.push(act.labels.save);
+      const dmg = (act.labels?.damage ?? []).map((d: any) => d.label ?? d.formula).filter(Boolean);
+      if (dmg.length) bits.push(dmg.join(' + '));
+      return bits.join(', ');
+    });
+    actions.push({
+      name: item.name,
+      activation,
+      cost: activities[0]?.activation?.value ?? null,
+      text: parts.filter(Boolean).join(' | ') || null,
+      uses: usesText || null,
+      range: item.labels?.range ?? null,
+    });
+  }
+  const spells = actor.items
+    .filter((i: any) => i.type === 'spell')
+    .map((i: any) => (i.system.level ? `${i.name} (${i.system.level})` : i.name));
+
+  return {
+    success: true,
+    name: token?.name ?? actor.name,
+    tokenId: token?.id ?? null,
+    type: actor.type,
+    cr: sys.details?.cr ?? null,
+    creatureType: sys.details?.type?.label ?? sys.details?.type?.value ?? null,
+    hp: hpOf(actor),
+    ac: attr.ac?.value ?? null,
+    initiative: attr.init?.total ?? null,
+    movement,
+    abilities,
+    saves,
+    skills,
+    passivePerception: sys.skills?.prc?.passive ?? null,
+    senses,
+    resistances: traitList(sys.traits?.dr, dnd.damageTypes),
+    immunities: traitList(sys.traits?.di, dnd.damageTypes),
+    vulnerabilities: traitList(sys.traits?.dv, dnd.damageTypes),
+    conditionImmunities: traitList(sys.traits?.ci, dnd.conditionTypes),
+    languages: traitList(sys.traits?.languages, null),
+    legendary: sys.resources?.legact?.max
+      ? `${sys.resources.legact.value}/${sys.resources.legact.max}`
+      : null,
+    spellDC: attr.spell?.dc ?? null,
+    spells,
+    traits,
+    actions,
+    conditions: [...(actor.statuses ?? [])].map(statusName),
+  };
+}
