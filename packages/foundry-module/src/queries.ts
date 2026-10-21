@@ -2,6 +2,7 @@ import { MODULE_ID } from './constants.js';
 import { FoundryDataAccess } from './data-access.js';
 import { ComfyUIManager } from './comfyui-manager.js';
 import { guardQueryHandler } from './query-guard.js';
+import * as table from './table-actions.js';
 
 export class QueryHandlers {
   public dataAccess: FoundryDataAccess;
@@ -145,6 +146,16 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.manageEffects`] = this.handleManageEffects.bind(this);
     CONFIG.queries[`${modulePrefix}.manageScene`] = this.handleManageScene.bind(this);
     CONFIG.queries[`${modulePrefix}.calendarClock`] = this.handleCalendarClock.bind(this);
+
+    // Spieltisch: Kampf, Schaden, Gruppenstatus, verdeckte Würfe, Tabellen, Chat, Makros, Ansicht
+    CONFIG.queries[`${modulePrefix}.combatControl`] = table.combatControl;
+    CONFIG.queries[`${modulePrefix}.applyDamage`] = table.applyDamage;
+    CONFIG.queries[`${modulePrefix}.partyStatus`] = table.partyStatus;
+    CONFIG.queries[`${modulePrefix}.gmRoll`] = table.gmRoll;
+    CONFIG.queries[`${modulePrefix}.rollTable`] = table.rollTable;
+    CONFIG.queries[`${modulePrefix}.postChat`] = table.postChat;
+    CONFIG.queries[`${modulePrefix}.runMacro`] = table.runMacro;
+    CONFIG.queries[`${modulePrefix}.sceneView`] = table.sceneView;
 
     // Phase 7: Token manipulation queries
     CONFIG.queries[`${modulePrefix}.move-token`] = this.handleMoveToken.bind(this);
@@ -2338,24 +2349,26 @@ export class QueryHandlers {
   }
 
   private async handleCalendarClock(data: any): Promise<any> {
-      const gmCheck = this.validateGMAccess();
-      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
-      const api = (globalThis as any).SimpleCalendar?.api;
-      if (!api) return { success: false, error: 'Simple Calendar Reborn ist nicht aktiv' };
-      if (!api.isPrimaryGM()) return { success: false, error: 'Dieser Browser ist nicht der Haupt-GM von Simple Calendar' };
-      if (data.action === 'start') api.startClock();
-      else if (data.action === 'pause') api.pauseClock();
-      else if (data.action === 'stop') api.stopClock();
-      const s = api.clockStatus();
-      const status = s.started ? 'started' : s.paused ? 'paused' : 'stopped';
-      return { success: true, status, gamePaused: (globalThis as any).game.paused === true };
-    }
+    const gmCheck = this.validateGMAccess();
+    if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+    const api = (globalThis as any).SimpleCalendar?.api;
+    if (!api) return { success: false, error: 'Simple Calendar Reborn ist nicht aktiv' };
+    if (!api.isPrimaryGM())
+      return { success: false, error: 'Dieser Browser ist nicht der Haupt-GM von Simple Calendar' };
+    if (data.action === 'start') api.startClock();
+    else if (data.action === 'pause') api.pauseClock();
+    else if (data.action === 'stop') api.stopClock();
+    const s = api.clockStatus();
+    const status = s.started ? 'started' : s.paused ? 'paused' : 'stopped';
+    return { success: true, status, gamePaused: (globalThis as any).game.paused === true };
+  }
   private async handleManageScene(data: any): Promise<any> {
     const gmCheck = this.validateGMAccess();
     if (!gmCheck.allowed) return { error: 'Access denied', success: false };
     const g = (globalThis as any).game;
     const findScene = (ident: string) =>
-      g.scenes.get(ident) ?? g.scenes.find((s: any) => s.name?.toLowerCase() === String(ident).toLowerCase());
+      g.scenes.get(ident) ??
+      g.scenes.find((s: any) => s.name?.toLowerCase() === String(ident).toLowerCase());
     const compact = (doc: any) => {
       const o = doc.toObject();
       delete o._stats;

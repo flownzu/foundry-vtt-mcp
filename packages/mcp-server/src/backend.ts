@@ -28,6 +28,7 @@ import { ActorManagementTools } from './tools/actor-management.js';
 import { EffectManagementTools } from './tools/effect-management.js';
 import { SceneBuilderTools } from './tools/scene-builder.js';
 import { CalendarClockTools } from './tools/calendar-clock.js';
+import { TableTools } from './tools/table-tools.js';
 
 import { QuestCreationTools } from './tools/quest-creation.js';
 
@@ -1203,6 +1204,7 @@ async function startBackend(): Promise<void> {
   const effectManagementTools = new EffectManagementTools({ foundryClient, logger });
   const sceneBuilderTools = new SceneBuilderTools({ foundryClient, logger });
   const calendarClockTools = new CalendarClockTools({ foundryClient, logger });
+  const tableTools = new TableTools({ foundryClient, logger });
 
   const dsa5CharacterCreator = new DSA5CharacterCreator({ foundryClient, logger });
   const dsa5JsonActorImporter = new DSA5JsonActorImporter({ foundryClient, logger });
@@ -1435,6 +1437,7 @@ async function startBackend(): Promise<void> {
     ...effectManagementTools.getToolDefinitions(),
     ...sceneBuilderTools.getToolDefinitions(),
     ...calendarClockTools.getToolDefinitions(),
+    ...tableTools.getToolDefinitions(),
 
     ...dsa5CharacterCreator.getToolDefinitions(),
     ...dsa5JsonActorImporter.getToolDefinitions(),
@@ -1634,6 +1637,18 @@ async function startBackend(): Promise<void> {
 
                 case 'calendar-clock':
                   result = await calendarClockTools.handleCalendarClock(args);
+
+                  break;
+
+                case 'combat':
+                case 'apply-damage':
+                case 'party-status':
+                case 'gm-roll':
+                case 'roll-table':
+                case 'post-chat':
+                case 'run-macro':
+                case 'scene-view':
+                  result = await tableTools.handle(name, args);
 
                   break;
 
