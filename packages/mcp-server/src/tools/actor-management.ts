@@ -144,6 +144,13 @@ export class ActorManagementTools {
                       'Use action:"describe" to get valid field names for the active system.',
                     additionalProperties: true,
                   },
+                  prototypeToken: {
+                    type: 'object',
+                    description:
+                      'Prototype token fields to update (e.g. texture.src, width, height, ring, alpha). ' +
+                      'Deep-merged by Foundry.',
+                    additionalProperties: true,
+                  },
                 },
                 required: ['id'],
               },
@@ -195,6 +202,13 @@ export class ActorManagementTools {
                     type: 'object',
                     additionalProperties: true,
                     description: 'System fields to update. Passed directly to Foundry.',
+                  },
+                  flags: {
+                    type: 'object',
+                    additionalProperties: true,
+                    description:
+                      'Module flags to update, keyed by module id (e.g. { autoanimations: {...} }). ' +
+                      'Deep-merged by Foundry.',
                   },
                 },
                 required: ['id'],
@@ -330,6 +344,7 @@ export class ActorManagementTools {
             name: z.string().optional(),
             img: z.string().optional(),
             system: z.record(z.any()).optional(),
+            prototypeToken: z.record(z.any()).optional(),
           })
         )
         .min(1),
@@ -382,6 +397,7 @@ export class ActorManagementTools {
               name: z.string().optional(),
               img: z.string().optional(),
               system: z.record(z.any()).optional(),
+              flags: z.record(z.any()).optional(),
               effects: z.unknown().optional(),
             })
             .superRefine((update, ctx) => {

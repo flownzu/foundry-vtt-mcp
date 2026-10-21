@@ -74,6 +74,8 @@ export class QueryHandlers {
       this.handleUpdateJournalContent.bind(this);
 
     // Phase 4: Dice roll queries
+    // Local patch: read recent chat messages / roll results
+    CONFIG.queries[`${modulePrefix}.getChatMessages`] = this.handleGetChatMessages.bind(this);
     CONFIG.queries[`${modulePrefix}.request-player-rolls`] =
       this.handleRequestPlayerRolls.bind(this);
 
@@ -141,6 +143,8 @@ export class QueryHandlers {
     CONFIG.queries[`${modulePrefix}.updateActorItems`] = this.handleUpdateActorItems.bind(this);
     CONFIG.queries[`${modulePrefix}.deleteActorItems`] = this.handleDeleteActorItems.bind(this);
     CONFIG.queries[`${modulePrefix}.manageEffects`] = this.handleManageEffects.bind(this);
+    CONFIG.queries[`${modulePrefix}.manageScene`] = this.handleManageScene.bind(this);
+    CONFIG.queries[`${modulePrefix}.calendarClock`] = this.handleCalendarClock.bind(this);
 
     // Phase 7: Token manipulation queries
     CONFIG.queries[`${modulePrefix}.move-token`] = this.handleMoveToken.bind(this);
@@ -655,6 +659,56 @@ export class QueryHandlers {
     } catch (error) {
       throw new Error(
         `Failed to create journal entry: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Local patch: return recent chat messages including roll results (GM only)
+   */
+  async handleGetChatMessages(data: { limit?: number; rollsOnly?: boolean }): Promise<any> {
+    try {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) {
+        return { error: 'Access denied', success: false };
+      }
+      const limit = Math.min(Math.max(Number(data?.limit) || 10, 1), 50);
+      const rollsOnly = data?.rollsOnly === true;
+      const strip = (html: unknown): string => {
+        if (!html) return '';
+        const div = document.createElement('div');
+        div.innerHTML = String(html);
+        return (div.textContent || '').replace(/\s+/g, ' ').trim();
+      };
+      const g = game as any;
+      let messages: any[] = g.messages.contents;
+      if (rollsOnly) messages = messages.filter((m: any) => m.rolls?.length);
+      messages = messages.slice(-limit);
+      const userName = (id: string) => g.users.get(id)?.name ?? id;
+      const result = messages.map((m: any) => ({
+        id: m.id,
+        time: new Date(m.timestamp).toISOString(),
+        author: m.author?.name ?? null,
+        speaker: m.speaker?.alias ?? null,
+        actor: m.speaker?.actor ? (g.actors.get(m.speaker.actor)?.name ?? m.speaker.actor) : null,
+        flavor: strip(m.flavor).slice(0, 300),
+        content: strip(m.content).slice(0, 500),
+        visibility: m.blind ? 'blind' : m.whisper?.length ? 'whisper' : 'public',
+        whisperTo: (m.whisper ?? []).map(userName),
+        dnd5eRoll: m.flags?.dnd5e?.roll ?? null,
+        rolls: (m.rolls ?? []).map((r: any) => ({
+          formula: r.formula,
+          total: r.total,
+          dice: r.dice.map((d: any) => ({
+            faces: d.faces,
+            results: d.results.map((x: any) => ({ result: x.result, active: x.active !== false })),
+          })),
+        })),
+      }));
+      return { success: true, count: result.length, messages: result };
+    } catch (error) {
+      throw new Error(
+        `Failed to get chat messages: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }
@@ -2281,5 +2335,68 @@ export class QueryHandlers {
     if (!gmCheck.allowed) return { error: 'Access denied', success: false };
     this.dataAccess.validateFoundryState();
     return this.dataAccess.manageEffects(data);
+  }
+
+  private async handleCalendarClock(data: any): Promise<any> {
+      const gmCheck = this.validateGMAccess();
+      if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+      const api = (globalThis as any).SimpleCalendar?.api;
+      if (!api) return { success: false, error: 'Simple Calendar Reborn ist nicht aktiv' };
+      if (!api.isPrimaryGM()) return { success: false, error: 'Dieser Browser ist nicht der Haupt-GM von Simple Calendar' };
+      if (data.action === 'start') api.startClock();
+      else if (data.action === 'pause') api.pauseClock();
+      else if (data.action === 'stop') api.stopClock();
+      const s = api.clockStatus();
+      const status = s.started ? 'started' : s.paused ? 'paused' : 'stopped';
+      return { success: true, status, gamePaused: (globalThis as any).game.paused === true };
+    }
+  private async handleManageScene(data: any): Promise<any> {
+    const gmCheck = this.validateGMAccess();
+    if (!gmCheck.allowed) return { error: 'Access denied', success: false };
+    const g = (globalThis as any).game;
+    const findScene = (ident: string) =>
+      g.scenes.get(ident) ?? g.scenes.find((s: any) => s.name?.toLowerCase() === String(ident).toLowerCase());
+    const compact = (doc: any) => {
+      const o = doc.toObject();
+      delete o._stats;
+      return o;
+    };
+    if (data.action === 'create-scene') {
+      const expectedBg = data.sceneData?.background?.src;
+      const scene = await (globalThis as any).Scene.create(data.sceneData);
+      if (expectedBg && scene.background?.src !== expectedBg) {
+        await scene.update({ background: { src: expectedBg } });
+      }
+      return { success: true, scene: { id: scene.id, name: scene.name } };
+    }
+    const scene = findScene(data.sceneIdentifier);
+    if (!scene) throw new Error(`Scene not found: ${data.sceneIdentifier}`);
+    const type = data.documentType;
+    switch (data.action) {
+      case 'update-scene':
+        await scene.update(data.sceneData);
+        return { success: true, scene: { id: scene.id, name: scene.name } };
+      case 'create-documents': {
+        const docs = await scene.createEmbeddedDocuments(type, data.documents);
+        return { success: true, documentType: type, created: docs.map((d: any) => d.id) };
+      }
+      case 'update-documents': {
+        const docs = await scene.updateEmbeddedDocuments(type, data.documents);
+        return { success: true, documentType: type, updated: docs.map((d: any) => d.id) };
+      }
+      case 'delete-documents': {
+        const docs = await scene.deleteEmbeddedDocuments(type, data.ids);
+        return { success: true, documentType: type, deleted: docs.map((d: any) => d.id) };
+      }
+      case 'list-documents':
+        return {
+          success: true,
+          scene: { id: scene.id, name: scene.name },
+          documentType: type,
+          documents: scene.getEmbeddedCollection(type).map(compact),
+        };
+      default:
+        throw new Error(`Unknown action: ${data.action}`);
+    }
   }
 }
